@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI DJ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "SF Mono", "Fira Code", monospace;
+      background: #08080d;
+      color: #e0e0e0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* ═══ LEFT: Camera + Ball ═══════════════════ */
+    .cam-panel {
+      width: 55%;
+      height: 100vh;
+      position: relative;
+      background: #000;
+      border-right: 2px solid #1a1a2e;
+      overflow: hidden;
+    }
+
+    .cam-panel video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    .cam-panel canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Tracking badge */
+    .track-badge {
+      position: absolute;
+      top: 10px; left: 10px;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,0.65);
+      padding: 4px 10px; border-radius: 20px;
+      font-size: 0.6rem; letter-spacing: 1px;
+      text-transform: uppercase; color: #4eff4e; z-index: 20;
+    }
+    .track-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: #4eff4e; }
+    .track-badge.lost { color: #ff5555; }
+    .track-badge.lost .dot { background: #ff5555; }
+
+    /* Gesture guide — bottom of camera panel */
+    .guide {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,0.88) 35%);
+      padding: 28px 14px 12px;
+      z-index: 20;
+    }
+
+    .guide h3 {
+      font-size: 0.55rem; color: #444;
+      text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px;
+    }
+
+    .guide-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 0; font-size: 0.68rem; color: #666;
+      transition: all 0.25s;
+    }
+    .guide-row.active { color: #00f0ff; transform: translateX(4px); }
+    .guide-row .gi { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+      border-radius: 5px; background: rgba(255,255,255,0.04); border: 1px solid #2a2a2a;
+      font-size: 0.7rem; flex-shrink: 0; }
+    .guide-row.active .gi { border-color: #00f0ff; background: rgba(0,240,255,0.08); }
+    .guide-action { margin-left: auto; color: #444; font-size: 0.58rem; }
+
+    /* ═══ RIGHT: DJ Controls ═══════════════════ */
+    .dj-panel {
+      width: 45%;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    .dj-panel::-webkit-scrollbar { width: 3px; }
+    .dj-panel::-webkit-scrollbar-thumb { background: #1a1a2e; border-radius: 2px; }
+
+    .title { font-size: 1.3rem; color: #00f0ff; text-transform: uppercase; letter-spacing: 4px; }
+    .sub { font-size: 0.58rem; color: #3a3a3a; letter-spacing: 2px; margin-top: -6px; }
+
+    /* Readouts */
+    .readouts { display: flex; gap: 6px; width: 100%; max-width: 380px; }
+    .ro { flex: 1; background: #0c0c14; border: 1px solid #1a1a2e; border-radius: 8px; padding: 8px 4px; text-align: center; transition: border-color 0.3s; }
+    .ro.active { border-color: #00f0ff; }
+    .ro-val { font-size: 1.1rem; font-weight: 700; color: #00f0ff; }
+    .ro-lbl { font-size: 0.48rem; color: #444; text-transform: uppercase; letter-spacing: 1px; }
+
+    /* Turntable card */
+    .tt-card {
+      width: 100%; max-width: 380px;
+      background: linear-gradient(145deg, #0c0c14, #12122a);
+      border: 1px solid #1a1a2e; border-radius: 14px; padding: 16px;
+    }
+    .tt-top { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+
+    .vinyl { width: 68px; height: 68px; border-radius: 50%; flex-shrink: 0;
+      background: radial-gradient(circle at 38% 38%, #1a1a1a, #080808);
+      border: 2px solid #1a1a2e; display: flex; align-items: center; justify-content: center;
+      position: relative; }
+    .vinyl.spin { animation: spin 2.5s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .vinyl img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; }
+    .vinyl-rings { position: absolute; inset: 3px; border-radius: 50%;
+      box-shadow: inset 0 0 0 5px rgba(255,255,255,0.015), inset 0 0 0 10px rgba(255,255,255,0.01), inset 0 0 0 15px rgba(255,255,255,0.008); }
+
+    .meta { flex: 1; min-width: 0; }
+    .meta-title { font-size: 0.95rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta-artist { font-size: 0.8rem; color: #777; margin-top: 1px; }
+    .meta-reason { font-size: 0.62rem; color: #444; font-style: italic; margin-top: 3px; }
+
+    .prog-wrap { width: 100%; height: 3px; background: #1a1a2e; border-radius: 2px; overflow: hidden; }
+    .prog-fill { height: 100%; background: linear-gradient(90deg, #7b2ff7, #00f0ff); width: 0%; transition: width 2s linear; }
+    .time-row { display: flex; justify-content: space-between; font-size: 0.55rem; color: #333; margin-top: 3px; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; max-width: 380px; }
+    .st { background: #0c0c14; border: 1px solid #1a1a2e; border-radius: 7px; padding: 8px 4px; text-align: center; }
+    .st-v { font-size: 1.2rem; font-weight: 700; color: #00f0ff; }
+    .st-l { font-size: 0.48rem; color: #444; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 0.6rem; font-weight: 600; text-transform: uppercase; }
+    .badge.build { background: #132613; color: #4eff4e; }
+    .badge.sustain { background: #262213; color: #ffe04e; }
+    .badge.wind_down { background: #261313; color: #ff6b4e; }
+
+    /* Waveform */
+    .wave-wrap { width: 100%; max-width: 380px; }
+    canvas#waveform { width: 100%; height: 50px; background: #0c0c14; border: 1px solid #1a1a2e; border-radius: 7px; }
+
+    /* EQ */
+    .eq { width: 100%; max-width: 380px; background: #0c0c14; border: 1px solid #1a1a2e; border-radius: 8px; padding: 12px; }
+    .eq-lbl { font-size: 0.5rem; color: #333; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
+    .eq-row { display: flex; gap: 14px; justify-content: center; }
+    .eq-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .eq-col label { font-size: 0.6rem; color: #666; }
+    .eq-col .ev { font-size: 0.55rem; color: #00f0ff; font-weight: 600; }
+    input[type="range"] { -webkit-appearance: none; width: 90px; height: 3px; background: #1a1a2e; border-radius: 2px; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #00f0ff; border-radius: 50%; cursor: pointer; }
+
+    /* Queue */
+    .queue { width: 100%; max-width: 380px; padding-bottom: 20px; }
+    .q-hdr { font-size: 0.5rem; color: #333; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; }
+    .q-item { background: #0c0c14; border: 1px solid #1a1a2e; border-radius: 5px; padding: 7px 10px; margin-bottom: 3px; display: flex; justify-content: space-between; align-items: center; }
+    .q-t { font-size: 0.75rem; color: #999; }
+    .q-b { font-size: 0.6rem; color: #444; }
+    .q-empty { color: #333; font-style: italic; font-size: 0.7rem; text-align: center; padding: 16px; }
+
+    /* Crossfade warning */
+    .cf-warn { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #7b2ff7; color: #fff; padding: 6px 20px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; display: none; z-index: 300; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  </style>
+</head>
+<body>
+
+  <div class="cf-warn" id="cfWarn">CROSSFADING...</div>
+
+  <!-- ═══ LEFT: Camera + Ball ═══ -->
+  <div class="cam-panel">
+    <video id="vid" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+
+    <div class="track-badge" id="badge">
+      <span class="dot"></span> <span id="badgeText">Tracking</span>
+    </div>
+
+    <div class="guide">
+      <h3>Ball Controls</h3>
+      <div class="guide-row" id="gDrag">
+        <div class="gi">&#9997;</div>
+        <span>Grab + drag ball</span>
+        <span class="guide-action">Volume / Crossfade</span>
+      </div>
+      <div class="guide-row" id="gStretch">
+        <div class="gi">&#10231;</div>
+        <span>Two hands stretch</span>
+        <span class="guide-action">Open filter</span>
+      </div>
+      <div class="guide-row" id="gSqueeze">
+        <div class="gi">&#10230;</div>
+        <span>Two hands squeeze</span>
+        <span class="guide-action">Close filter</span>
+      </div>
+      <div class="guide-row" id="gPinch">
+        <div class="gi">&#9996;</div>
+        <span>Pinch near ball</span>
+        <span class="guide-action">Skip track</span>
+      </div>
+      <div class="guide-row" id="gFist">
+        <div class="gi">&#9994;</div>
+        <span>Fist near ball</span>
+        <span class="guide-action">Pause / Play</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ RIGHT: DJ Controls ═══ -->
+  <div class="dj-panel">
+    <div class="title">AI DJ</div>
+    <div class="sub">Voice + Hands + Spotify</div>
+
+    <div class="readouts">
+      <div class="ro" id="roVol"><div class="ro-val" id="roVolVal">70%</div><div class="ro-lbl">Volume</div></div>
+      <div class="ro" id="roCf"><div class="ro-val" id="roCfVal">50%</div><div class="ro-lbl">Crossfade</div></div>
+      <div class="ro" id="roFilt"><div class="ro-val" id="roFiltVal">8000 Hz</div><div class="ro-lbl">Filter</div></div>
+    </div>
+
+    <div class="tt-card">
+      <div class="tt-top">
+        <div class="vinyl" id="vinyl"><div class="vinyl-rings"></div><img id="art" src="" alt=""></div>
+        <div class="meta">
+          <div class="meta-title" id="mTitle">Waiting for voice input...</div>
+          <div class="meta-artist" id="mArtist">Press ENTER in terminal</div>
+          <div class="meta-reason" id="mReason"></div>
+        </div>
+      </div>
+      <div class="prog-wrap"><div class="prog-fill" id="prog"></div></div>
+      <div class="time-row"><span id="tElap">0:00</span><span id="tRem">0:00</span></div>
+    </div>
+
+    <div class="stats">
+      <div class="st"><div class="st-v" id="sBpm">--</div><div class="st-l">BPM</div></div>
+      <div class="st"><div class="st-v" id="sEnergy">--</div><div class="st-l">Energy</div></div>
+      <div class="st"><div class="st-v" id="sVibe">--</div><div class="st-l">Vibe</div></div>
+      <div class="st"><div class="st-v"><span class="badge sustain" id="sFlow">--</span></div><div class="st-l">Flow</div></div>
+    </div>
+
+    <div class="wave-wrap"><canvas id="waveform"></canvas></div>
+
+    <div class="eq">
+      <div class="eq-lbl">Equalizer</div>
+      <div class="eq-row">
+        <div class="eq-col"><label>Bass</label><input type="range" id="eqB" min="-12" max="12" value="0" step="0.5"><span class="ev" id="evB">0 dB</span></div>
+        <div class="eq-col"><label>Mid</label><input type="range" id="eqM" min="-12" max="12" value="0" step="0.5"><span class="ev" id="evM">0 dB</span></div>
+        <div class="eq-col"><label>High</label><input type="range" id="eqH" min="-12" max="12" value="0" step="0.5"><span class="ev" id="evH">0 dB</span></div>
+      </div>
+    </div>
+
+    <div class="queue">
+      <div class="q-hdr">Up Next</div>
+      <div id="qList"><div class="q-empty">No tracks queued yet</div></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const socket = io();
+    const $ = id => document.getElementById(id);
+
+    // ── Webcam ──────────────────────────────────
+    const vid = $("vid"), canvas = $("overlay"), ctx = canvas.getContext("2d");
+
+    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "user" } })
+      .then(s => { vid.srcObject = s; }).catch(() => {});
+
+    // Canvas sizing
+    function sizeCanvas() {
+      const r = canvas.parentElement.getBoundingClientRect();
+      canvas.width = r.width; canvas.height = r.height;
+    }
+    window.addEventListener("resize", sizeCanvas);
+    setTimeout(sizeCanvas, 200);
+
+    // ── Ball State ──────────────────────────────
+    const ball = {
+      x: 0.5, y: 0.5,       // normalized 0-1 (center of canvas)
+      radius: 0.09,          // normalized to canvas width
+      baseRadius: 0.09,
+      minRadius: 0.04,
+      maxRadius: 0.22,
+      grabbed: false,
+      hue: 190,              // shifts with interactions
+    };
+
+    // DJ state (frozen when hands disappear)
+    const dj = { volume: 70, crossfade: 50, filterHz: 8000 };
+
+    let lastHands = [];
+    let prevTwoDist = null;
+    let lastSkipT = 0, lastPauseT = 0;
+    const DEBOUNCE = 600;
+
+    // ── Hand skeleton connections ────────────────
+    const CONNS = [
+      [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20],[0,17]
+    ];
+
+    // ── Gesture helpers ─────────────────────────
+    function palmCenter(lm) {
+      const ids = [0, 5, 9, 13, 17];
+      let sx = 0, sy = 0;
+      ids.forEach(i => { sx += lm[i][0]; sy += lm[i][1]; });
+      return { x: sx / ids.length, y: sy / ids.length };
+    }
+
+    function isGrabbing(lm) {
+      // 3+ of 4 fingertips below their MCP (y is downward)
+      const tips = [[8,5],[12,9],[16,13],[20,17]];
+      let curled = 0;
+      tips.forEach(([t,m]) => { if (lm[t][1] > lm[m][1]) curled++; });
+      return curled >= 3;
+    }
+
+    function isPinch(lm) {
+      const dx = lm[4][0] - lm[8][0], dy = lm[4][1] - lm[8][1];
+      return Math.sqrt(dx*dx + dy*dy) < 35;
+    }
+
+    function isFist(lm) {
+      const tips = [[8,5],[12,9],[16,13],[20,17]];
+      return tips.every(([t,m]) => lm[t][1] > lm[m][1]);
+    }
+
+    function dist(a, b) { return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2); }
+
+    // Normalize pixel landmarks to 0-1 canvas space
+    function normLm(lm) {
+      // Landmarks are in 640x480 pixel space from Python
+      return lm.map(([x, y]) => [x / 640, y / 480]);
+    }
+
+    // ── Highlight guide rows ────────────────────
+    function hlGuide(id) {
+      document.querySelectorAll(".guide-row").forEach(r => r.classList.remove("active"));
+      if (id) $(id)?.classList.add("active");
+    }
+
+    // ── Throttle SocketIO emissions ─────────────
+    let lastEmitT = 0;
+    function throttledEmit(event, data) {
+      const now = Date.now();
+      if (now - lastEmitT > 80) { // max ~12 emits/sec
+        socket.emit(event, data);
+        lastEmitT = now;
+      }
+    }
+
+    // ── Process hands + ball interaction ─────────
+    function processHands(hands) {
+      if (!hands.length) {
+        prevTwoDist = null;
+        hlGuide(null);
+        return; // values frozen — no updates
+      }
+
+      const normed = hands.map(h => ({
+        side: h.side,
+        lm: normLm(h.landmarks),
+      }));
+
+      const now = Date.now();
+
+      // Two hands: stretch/squeeze the ball → filter
+      if (normed.length === 2) {
+        const p0 = palmCenter(normed[0].lm);
+        const p1 = palmCenter(normed[1].lm);
+        const d = dist(p0, p1);
+
+        // Both hands near ball? (within 3x ball radius)
+        const bp = { x: ball.x, y: ball.y };
+        const near0 = dist(p0, bp) < ball.radius * 4;
+        const near1 = dist(p1, bp) < ball.radius * 4;
+
+        if (near0 && near1) {
+          if (prevTwoDist !== null) {
+            const delta = d - prevTwoDist;
+            ball.radius = Math.max(ball.minRadius, Math.min(ball.maxRadius, ball.radius + delta * 0.5));
+
+            // Map radius to filter: bigger ball = higher cutoff
+            const ratio = (ball.radius - ball.minRadius) / (ball.maxRadius - ball.minRadius);
+            dj.filterHz = Math.round(200 + ratio * (8000 - 200));
+            $("roFiltVal").textContent = dj.filterHz + " Hz";
+            $("roFilt").classList.add("active");
+            setTimeout(() => $("roFilt").classList.remove("active"), 300);
+
+            hlGuide(delta > 0.002 ? "gStretch" : delta < -0.002 ? "gSqueeze" : null);
+          }
+          prevTwoDist = d;
+
+          // Move ball to midpoint of two hands
+          ball.x = (p0.x + p1.x) / 2;
+          ball.y = (p0.y + p1.y) / 2;
+          return; // two-hand mode takes priority
+        }
+        prevTwoDist = null;
+      } else {
+        prevTwoDist = null;
+      }
+
+      // Single hand interactions
+      const h = normed[0]; // use first/closest hand
+      const palm = palmCenter(h.lm);
+      const bp = { x: ball.x, y: ball.y };
+      const nearBall = dist(palm, bp) < ball.radius * 2.5;
+
+      // Pinch near ball → skip
+      if (nearBall && isPinch(h.lm) && now - lastSkipT > DEBOUNCE) {
+        lastSkipT = now;
+        socket.emit("browser_skip", {});
+        hlGuide("gPinch");
+        return;
+      }
+
+      // Fist near ball → pause/play
+      if (nearBall && isFist(h.lm) && !isPinch(h.lm) && now - lastPauseT > DEBOUNCE) {
+        lastPauseT = now;
+        socket.emit("browser_pause_play", {});
+        hlGuide("gFist");
+        return;
+      }
+
+      // Grab + drag → volume (Y) + crossfade (X)
+      if (nearBall && isGrabbing(h.lm)) {
+        ball.grabbed = true;
+        ball.x += (palm.x - ball.x) * 0.3; // smooth follow
+        ball.y += (palm.y - ball.y) * 0.3;
+
+        // Clamp
+        ball.x = Math.max(0.05, Math.min(0.95, ball.x));
+        ball.y = Math.max(0.05, Math.min(0.95, ball.y));
+
+        // Map Y to volume (top = 100, bottom = 0)
+        dj.volume = Math.round((1 - ball.y) * 100);
+        dj.volume = Math.max(0, Math.min(100, dj.volume));
+
+        // Map X to crossfade
+        dj.crossfade = Math.round(ball.x * 100);
+
+        $("roVolVal").textContent = dj.volume + "%";
+        $("roCfVal").textContent = dj.crossfade + "%";
+        $("roVol").classList.add("active");
+        $("roCf").classList.add("active");
+        setTimeout(() => { $("roVol").classList.remove("active"); $("roCf").classList.remove("active"); }, 300);
+
+        throttledEmit("browser_volume", { volume: dj.volume });
+        hlGuide("gDrag");
+      } else {
+        ball.grabbed = false;
+      }
+    }
+
+    // ── Render loop ─────────────────────────────
+    function render() {
+      sizeCanvas();
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      // Python sends 640x480 coordinates. Scale to canvas.
+      const sx = W / 640, sy = H / 480;
+
+      // Draw hand skeletons
+      lastHands.forEach(hand => {
+        const lm = hand.landmarks;
+        const col = hand.side === "Left" ? "rgba(78, 255, 78, 0.7)" : "rgba(255, 159, 78, 0.7)";
+        const glow = hand.side === "Left" ? "#4eff4e" : "#ff9f4e";
+
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = glow;
+        ctx.shadowBlur = 10;
+        CONNS.forEach(([a, b]) => {
+          ctx.beginPath();
+          ctx.moveTo(lm[a][0] * sx, lm[a][1] * sy);
+          ctx.lineTo(lm[b][0] * sx, lm[b][1] * sy);
+          ctx.stroke();
+        });
+        ctx.shadowBlur = 0;
+
+        lm.forEach(([x, y]) => {
+          ctx.beginPath();
+          ctx.arc(x * sx, y * sy, 4, 0, Math.PI * 2);
+          ctx.fillStyle = "#fff";
+          ctx.fill();
+        });
+      });
+
+      // Draw the ball
+      const bx = ball.x * W, by = ball.y * H, br = ball.radius * W;
+
+      // Outer glow
+      const grad = ctx.createRadialGradient(bx, by, br * 0.2, bx, by, br * 1.4);
+      const hue = ball.hue;
+      grad.addColorStop(0, `hsla(${hue}, 100%, 60%, 0.5)`);
+      grad.addColorStop(0.5, `hsla(${hue}, 100%, 50%, 0.15)`);
+      grad.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+
+      ctx.beginPath();
+      ctx.arc(bx, by, br * 1.4, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Inner ball
+      const inner = ctx.createRadialGradient(bx - br * 0.2, by - br * 0.2, br * 0.1, bx, by, br);
+      inner.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.9)`);
+      inner.addColorStop(0.6, `hsla(${hue}, 100%, 55%, 0.7)`);
+      inner.addColorStop(1, `hsla(${hue}, 80%, 40%, 0.4)`);
+
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
+      ctx.fillStyle = inner;
+      ctx.fill();
+
+      // Border ring
+      ctx.strokeStyle = ball.grabbed ? `hsla(${hue}, 100%, 70%, 0.9)` : `hsla(${hue}, 60%, 50%, 0.3)`;
+      ctx.lineWidth = ball.grabbed ? 3 : 1.5;
+      ctx.stroke();
+
+      // Shift hue slowly based on crossfade position
+      ball.hue = 190 + (dj.crossfade - 50) * 1.5; // 115 to 265
+
+      requestAnimationFrame(render);
+    }
+    render();
+
+    // ── SocketIO: hand landmarks ────────────────
+    socket.on("hand_landmarks", (data) => {
+      lastHands = data;
+      processHands(data);
+    });
+
+    socket.on("tracking_status", (data) => {
+      const badge = $("badge");
+      badge.classList.toggle("lost", data.lost);
+      $("badgeText").textContent = data.lost ? "Lost — values frozen" : "Tracking";
+    });
+
+    // ── EQ sliders ──────────────────────────────
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const bf = audioCtx.createBiquadFilter(); bf.type="lowshelf"; bf.frequency.value=80;
+    const mf = audioCtx.createBiquadFilter(); mf.type="peaking"; mf.frequency.value=1000; mf.Q.value=1;
+    const hf = audioCtx.createBiquadFilter(); hf.type="highshelf"; hf.frequency.value=8000;
+    bf.connect(mf); mf.connect(hf); hf.connect(audioCtx.destination);
+
+    function eqSetup(s, v, f) {
+      $(s).addEventListener("input", () => {
+        f.gain.value = parseFloat($(s).value);
+        $(v).textContent = parseFloat($(s).value).toFixed(1) + " dB";
+        socket.emit("eq_change", { bass: bf.gain.value, mid: mf.gain.value, high: hf.gain.value });
+      });
+    }
+    eqSetup("eqB","evB",bf); eqSetup("eqM","evM",mf); eqSetup("eqH","evH",hf);
+
+    // ── Waveform ────────────────────────────────
+    const wc = $("waveform"), wx = wc.getContext("2d");
+    let curBPM = 120, curE = 0.5;
+
+    function drawWave() {
+      const dpr = devicePixelRatio||1, rect = wc.getBoundingClientRect();
+      wc.width = rect.width*dpr; wc.height = rect.height*dpr; wx.scale(dpr,dpr);
+      const w = rect.width, h = rect.height;
+      wx.fillStyle="#0c0c14"; wx.fillRect(0,0,w,h);
+      const now = performance.now()/1000, freq = curBPM/60, amp = h*0.3*curE;
+      wx.beginPath(); wx.strokeStyle="#00f0ff"; wx.lineWidth=2; wx.shadowColor="#00f0ff"; wx.shadowBlur=5;
+      for(let x=0;x<w;x++){const t=x/w;const y=h/2+Math.sin(2*Math.PI*freq*(now+t*2))*amp+Math.sin(2*Math.PI*freq*2.3*(now+t*2))*amp*0.3;x===0?wx.moveTo(x,y):wx.lineTo(x,y);}
+      wx.stroke(); wx.shadowBlur=0;
+      wx.beginPath(); wx.strokeStyle="rgba(123,47,247,0.3)"; wx.lineWidth=1;
+      for(let x=0;x<w;x++){const t=x/w;const y=h/2+Math.cos(2*Math.PI*freq*1.5*(now+t*2))*amp*0.4;x===0?wx.moveTo(x,y):wx.lineTo(x,y);}
+      wx.stroke(); requestAnimationFrame(drawWave);
+    }
+    drawWave();
+
+    // ── Time ────────────────────────────────────
+    function fmt(ms){const s=Math.floor(ms/1000),m=Math.floor(s/60);return m+":"+String(s%60).padStart(2,"0");}
+
+    // ── Playback state ──────────────────────────
+    socket.on("playback_state", d => {
+      $("mTitle").textContent = d.title||"Unknown";
+      $("mArtist").textContent = d.artist||"Unknown";
+      $("mReason").textContent = d.reason||"";
+      if(d.album_art){$("art").src=d.album_art;$("art").style.display="block";}
+      $("vinyl").classList.toggle("spin",d.is_playing);
+      const pct=d.duration_ms>0?(d.progress_ms/d.duration_ms)*100:0;
+      $("prog").style.width=pct+"%";
+      $("tElap").textContent=fmt(d.progress_ms);
+      $("tRem").textContent="-"+fmt(d.duration_ms-d.progress_ms);
+      if(d.bpm>0){$("sBpm").textContent=d.bpm;curBPM=d.bpm;}
+      $("sEnergy").textContent=d.energy>0?(d.energy*100).toFixed(0)+"%":"--";
+      $("sVibe").textContent=d.valence>0?(d.valence*100).toFixed(0)+"%":"--";
+      curE=d.energy||0.5;
+      const t=d.energy_trajectory||"sustain";
+      $("sFlow").textContent=t.replace("_"," ");
+      $("sFlow").className="badge "+t;
+    });
+
+    socket.on("crossfade_warning",()=>{$("cfWarn").style.display="block";setTimeout(()=>$("cfWarn").style.display="none",5000);});
+
+    socket.on("queue_update",d=>{
+      const u=d.upcoming||[];
+      if(!u.length){$("qList").innerHTML='<div class="q-empty">No more tracks queued</div>';return;}
+      $("qList").innerHTML=u.map(t=>{const b=t.features?.bpm?t.features.bpm+" BPM":"";return`<div class="q-item"><span class="q-t">${t.title} — ${t.artist}</span><span class="q-b">${b}</span></div>`;}).join("");
+    });
+  </script>
+</body>
+</html>

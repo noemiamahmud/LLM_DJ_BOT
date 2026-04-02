@@ -121,8 +121,8 @@ def validate_transcript(text: str) -> str:
         raise ValueError("Empty transcript — try speaking louder.")
     if len(text) > 200:
         raise ValueError("Transcript too long (>200 chars). Keep it short.")
-    if len(text.split()) < 3:
-        raise ValueError("Too few words — say something like 'play me something chill and jazzy'.")
+    if len(text.split()) < 2:
+        raise ValueError("Too few words — say something like 'chill jazz' or 'upbeat indie'.")
     return text
 
 
@@ -172,12 +172,12 @@ def build_messages(transcript: str) -> list[dict]:
 
 # ── Layer 3: LLM Call ─────────────────────────────────────────────────────
 
-def call_claude(messages: list[dict]) -> str:
+def call_claude(messages: list[dict], system_prompt: str = None) -> str:
     """Layer 3 — call Claude and return the raw response text."""
     response = claude.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
+        system=system_prompt or SYSTEM_PROMPT,
         messages=messages,
     )
     return response.content[0].text
@@ -222,6 +222,21 @@ def parse_response(raw: str) -> dict:
 _queued_uris: set[str] = set()
 
 
+def _find_active_device(sp):
+    """Return the ID of an active Spotify device, or None."""
+    try:
+        devices = sp.devices().get("devices", [])
+        for d in devices:
+            if d.get("is_active"):
+                return d["id"]
+        # No active device — pick the first available one
+        if devices:
+            return devices[0]["id"]
+    except Exception:
+        pass
+    return None
+
+
 def validate_and_queue(data: dict, sp) -> list[dict]:
     """Layer 5 — search Spotify for each track, validate, and queue.
 
@@ -234,7 +249,17 @@ def validate_and_queue(data: dict, sp) -> list[dict]:
     if len(tracks) > 5:
         tracks = tracks[:5]
 
+    # Check for an active device upfront so we can start playback if needed
+    device_id = None
+    if sp is not None:
+        device_id = _find_active_device(sp)
+        if device_id is None:
+            print("   ⚠  No active Spotify device found — showing recommendations only.")
+            print("      Open Spotify on your phone/desktop/browser and play anything, then try again.\n")
+            sp = None  # fall back to recommendation-only for this round
+
     queued = []
+    first_track = True  # first track uses start_playback, rest use add_to_queue
 
     for t in tracks:
         search_query = t.get("search_query", "")
@@ -243,7 +268,6 @@ def validate_and_queue(data: dict, sp) -> list[dict]:
         artist_hint = t.get("artist_hint", "Unknown")
 
         if sp is None:
-            # Recommendation-only mode — no Spotify
             queued.append({
                 "title": title_hint,
                 "artist": artist_hint,
@@ -265,17 +289,21 @@ def validate_and_queue(data: dict, sp) -> list[dict]:
             artist = found["artists"][0]["name"]
             duration_ms = found["duration_ms"]
 
-            # Reject very short tracks (intros, interludes)
             if duration_ms < 90_000:
                 print(f"   ⚠  Skipping '{title}' — too short ({duration_ms // 1000}s)")
                 continue
 
-            # Reject duplicates within this session
             if uri in _queued_uris:
                 print(f"   ⚠  Skipping '{title}' — already queued this session")
                 continue
 
-            sp.add_to_queue(uri)
+            if first_track:
+                # Start playback on the device — this wakes it up and begins playing
+                sp.start_playback(device_id=device_id, uris=[uri])
+                first_track = False
+            else:
+                sp.add_to_queue(uri)
+
             _queued_uris.add(uri)
 
             queued.append({
