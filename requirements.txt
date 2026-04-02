@@ -1,0 +1,18 @@
+# Phase 1 — Voice Brain
+anthropic
+sounddevice
+numpy
+transformers
+torch
+accelerate
+spotipy
+python-dotenv
+
+# Phase 2 — Playback Engine
+flask
+flask-socketio
+pyttsx3
+
+# Phase 3 — Hand Turntable
+mediapipe
+opencv-python
